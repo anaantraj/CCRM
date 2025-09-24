@@ -1,0 +1,128 @@
+package edu.ccrm.io;
+
+import edu.ccrm.config.AppConfig;
+import edu.ccrm.domain.*;
+import edu.ccrm.service.CourseService;
+import edu.ccrm.service.DataStore;
+import edu.ccrm.service.StudentService;
+
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Handles importing and exporting data from/to CSV files using NIO.2.
+ */
+public class ImportExportService {
+    private final AppConfig config = AppConfig.getInstance();
+    private final DataStore dataStore = DataStore.getInstance();
+    private final StudentService studentService = new StudentService();
+    private final CourseService courseService = new CourseService();
+
+    private final Path studentFilePath = Paths.get(config.getDataDirectory(), "students.csv");
+    private final Path courseFilePath = Paths.get(config.getDataDirectory(), "courses.csv");
+    private final Path enrollmentFilePath = Paths.get(config.getDataDirectory(), "enrollments.csv");
+
+    /**
+     * Imports students from the default students.csv file.
+     * @return The number of students imported.
+     * @throws IOException if an I/O error occurs.
+     */
+    public int importStudents() throws IOException {
+        Files.createDirectories(studentFilePath.getParent());
+        int count = 0;
+        // Topic: NIO.2 (Files.lines) with try-with-resources
+        try (Stream<String> lines = Files.lines(studentFilePath)) {
+            lines.forEach(line -> {
+                String[] parts = line.split(","); // Topic: String methods (split)
+                if (parts.length == 3) {
+                    studentService.addStudent(parts[0], parts[1], parts[2]);
+                }
+            });
+            count = (int) dataStore.getStudents().count();
+        }
+        return count;
+    }
+
+     /**
+     * Imports courses from the default courses.csv file.
+     * @return The number of courses imported.
+     * @throws IOException if an I/O error occurs.
+     */
+    public int importCourses() throws IOException {
+        Files.createDirectories(courseFilePath.getParent());
+        int count = 0;
+        try (Stream<String> lines = Files.lines(courseFilePath)) {
+            lines.forEach(line -> {
+                String[] parts = line.split(",");
+                if (parts.length == 5) {
+                    Course course = new Course.Builder(new CourseCode(parts[0]), parts[1])
+                            .credits(Integer.parseInt(parts[2]))
+                            .department(Department.valueOf(parts[3]))
+                            .semester(Semester.valueOf(parts[4]))
+                            .build();
+                    courseService.addCourse(course);
+                }
+            });
+            count = (int) dataStore.getCourses().count();
+        }
+        return count;
+    }
+
+    /**
+     * Exports all current data (students, courses, enrollments) to CSV files.
+     * @throws IOException if an I/O error occurs.
+     */
+    public void exportAllData() throws IOException {
+        Files.createDirectories(studentFilePath.getParent());
+        exportStudents();
+        exportCourses();
+        exportEnrollments();
+    }
+
+    private void exportStudents() throws IOException {
+        List<String> lines = dataStore.getStudents()
+                .map(s -> String.join(",", s.getRegistrationNumber(), s.getFullName(), s.getEmail()))
+                .collect(Collectors.toList());
+        Files.write(studentFilePath, lines);
+    }
+
+    private void exportCourses() throws IOException {
+        List<String> lines = dataStore.getCourses()
+                .map(c -> String.join(",",
+                        c.getCourseCode().getCode(),
+                        c.getTitle(),
+                        String.valueOf(c.getCredits()),
+                        c.getDepartment().name(),
+                        c.getSemester().name()))
+                .collect(Collectors.toList());
+        Files.write(courseFilePath, lines);
+    }
+
+    private void exportEnrollments() throws IOException {
+        BufferedWriter writer = null;
+        try {
+            writer = Files.newBufferedWriter(enrollmentFilePath);
+            for (Student s : dataStore.getStudents().collect(Collectors.toList())) {
+                for (Enrollment e : s.getEnrollments()) {
+                    String line = String.join(",",
+                            s.getRegistrationNumber(),
+                            e.getCourse().getCourseCode().getCode(),
+                            e.getGrade().name());
+                    writer.write(line);
+                    writer.newLine();
+                }
+            }
+        } finally {
+            // Topic: Exceptions (`finally` block for resource cleanup)
+            if (writer != null) {
+                writer.close();
+            }
+        }
+    }
+}
